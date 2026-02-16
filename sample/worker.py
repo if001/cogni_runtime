@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import argparse
+
+from worker_runtime.adapters import TaskAdapter
+from worker_runtime.registry import AdapterRegistry
+from worker_runtime.zmq_worker import ZmqWorker
+
+
+class SampleAgentAdapter(TaskAdapter):
+    kind = "sample_agent"
+
+    def __init__(self):
+        pass
+
+    def run(self, payload):
+        theme = payload.get("theme", "")
+
+        print(f"[adapter] running agent with theme={theme}")
+
+        ## ダミー
+        # app = self.build_graph()
+        # result = app.invoke({"theme": theme})
+        result = {"final_text": f"sample_agent completed research on '{theme}'"}
+
+        summary = result["final_text"]
+
+        return {
+            "title": theme,
+            "summary": summary,
+            "artifact_paths": [],
+        }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--name",
+        required=True,
+        help="worker name (worker1, worker2, etc)",
+    )
+
+    parser.add_argument(
+        "--connect",
+        default="tcp://127.0.0.1:5555",
+        help="controller address",
+    )
+
+    args = parser.parse_args()
+
+    registry = AdapterRegistry()
+
+    registry.register(SampleAgentAdapter())
+
+    worker = ZmqWorker(
+        worker_name=args.name,
+        connect_addr=args.connect,
+        registry=registry,
+    )
+
+    worker.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
