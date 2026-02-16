@@ -10,7 +10,7 @@ from logging import getLogger, basicConfig, INFO
 logger = getLogger(__name__)
 
 
-from app.worker_runtime.registry import AdapterRegistry
+from worker_runtime.registry import AdapterRegistry
 
 
 def _j(obj) -> bytes:
@@ -59,6 +59,7 @@ class ZmqWorker:
             try:
                 adapter = self.registry.get(kind)
                 out = adapter.run(payload)  # 外部agent invoke は adapter 内でやる
+                out = out or {}
 
                 msg = {
                     "type": "task.result",
@@ -67,10 +68,7 @@ class ZmqWorker:
                     "kind": kind,
                     "turn_id": turn_id,
                     "status": "DONE",
-                    "title": out.get("title", ""),
-                    "summary": out.get("summary", ""),
-                    "result_id": out.get("result_id"),
-                    "artifact_paths": out.get("artifact_paths") or [],
+                    "payload": out,
                 }
                 self._sock.send_multipart([b"", _j(msg)])
             except Exception as e:
@@ -81,6 +79,6 @@ class ZmqWorker:
                     "kind": kind,
                     "turn_id": turn_id,
                     "status": "FAILED",
-                    "error": f"{type(e).__name__}: {e}",
+                    "payload": {"error": f"{type(e).__name__}: {e}"},
                 }
                 self._sock.send_multipart([b"", _j(msg)])

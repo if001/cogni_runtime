@@ -23,8 +23,9 @@ class SimpleEchoAgent(LlmAgentAdapter):
             final = f"Echo: {text}"
             return chunks, final, {"agent": "SimpleEchoAgent"}
         elif event.type == "sub.done":
-            title = event.payload.get("title", "sub_agent")
-            summary = event.payload.get("summary", "")
+            worker_payload = event.payload.get("payload") or {}
+            title = worker_payload.get("title", "sub_agent")
+            summary = worker_payload.get("summary", "")
             final = f"[sub_agent完了] {title}\n{summary}"
             return [], final, {"agent": "SimpleEchoAgent"}
         else:

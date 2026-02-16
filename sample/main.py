@@ -20,8 +20,9 @@ class SimpleEchoAgent(LlmAgentAdapter):
             return [], f"Echo: {text}", {}
 
         elif event.type == InputEventType.SubDone:
-            title = event.payload.get("title", "")
-            summary = event.payload.get("summary", "")
+            worker_payload = event.payload.get("payload") or {}
+            title = worker_payload.get("title", "")
+            summary = worker_payload.get("summary", "")
             return [], f"[Worker Done] {title}\n{summary}", {}
 
         elif event.type == InputEventType.SubFailed:

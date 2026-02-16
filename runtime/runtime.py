@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional, Tuple, List, Type
 
 from runtime.types import (
     InputEvent,
-    InputEventLiteral,
     InputEventType,
     OutputEvent,
     OutputEventType,
@@ -167,20 +166,15 @@ class MainAgentRuntime:
         with self._inflight_lock:
             self._inflight[worker] = max(0, self._inflight.get(worker, 1) - 1)
 
+        payload = {"subagent": r.kind, "task_id": r.task_id, "worker": worker}
+        if r.payload:
+            payload["payload"] = r.payload
         if r.status == "DONE":
             ev = InputEvent(
                 event_id=new_id(),
                 ts=now_ts(),
                 type=InputEventType.SubDone,
-                payload={
-                    "subagent": r.kind,
-                    "title": r.title,
-                    "summary": r.summary,
-                    "result_id": r.result_id,
-                    "artifact_paths": r.artifact_paths or [],
-                    "task_id": r.task_id,
-                    "worker": worker,
-                },
+                payload=payload,
                 turn_id=r.turn_id,
                 priority=20,
             )
@@ -190,12 +184,7 @@ class MainAgentRuntime:
                 event_id=new_id(),
                 ts=now_ts(),
                 type=InputEventType.SubFailed,
-                payload={
-                    "subagent": r.kind,
-                    "error": r.error,
-                    "task_id": r.task_id,
-                    "worker": worker,
-                },
+                payload=payload,
                 turn_id=r.turn_id,
                 priority=20,
             )
@@ -205,13 +194,7 @@ class MainAgentRuntime:
                 event_id=new_id(),
                 ts=now_ts(),
                 type=InputEventType.SubProgress,
-                payload={
-                    "subagent": r.kind,
-                    "progress": r.progress,
-                    "summary": r.summary,
-                    "task_id": r.task_id,
-                    "worker": worker,
-                },
+                payload=payload,
                 turn_id=r.turn_id,
                 priority=30,
             )

@@ -1,6 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, List, Literal
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Literal
 from enum import StrEnum
 import time
 import uuid
@@ -92,9 +92,4 @@ class TaskResult:
     turn_id: str
     status: str  # "DONE" / "FAILED" / "PROGRESS"
     worker: str
-    title: str = ""
-    summary: str = ""
-    result_id: Optional[str] = None
-    artifact_paths: Optional[List[str]] = None
-    error: str = ""
-    progress: float = 0.0
+    payload: Dict[str, Any] = field(default_factory=dict)

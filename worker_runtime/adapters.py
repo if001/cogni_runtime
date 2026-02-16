@@ -9,7 +9,7 @@ class TaskAdapter(Protocol[T]):
 
     def run(self, payload: T) -> Dict[str, Any]:
         """
-        Must return JSON-serializable dict:
-          - title, summary, result_id (optional), artifact_paths (optional)
+        Must return JSON-serializable dict.
+        The shape is defined by the library user and passed through as-is.
         """
         ...

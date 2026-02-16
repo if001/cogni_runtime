@@ -91,12 +91,7 @@ class ControllerBus:
                     turn_id=data["turn_id"],
                     status=data["status"],
                     worker=data["worker"],
-                    title=data.get("title", ""),
-                    summary=data.get("summary", ""),
-                    result_id=data.get("result_id"),
-                    artifact_paths=data.get("artifact_paths") or [],
-                    error=data.get("error", ""),
-                    progress=float(data.get("progress", 0.0)),
+                    payload=data.get("payload") or {},
                 )
                 self.on_result(r)
             except Exception:
