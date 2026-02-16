@@ -26,8 +26,9 @@ class SimpleEchoAgent(LlmAgentAdapter):
             return [], f"[Worker Done] {title}\n{summary}", {}
 
         elif event.type == InputEventType.SubFailed:
-            err = event.payload.get("error", "")
-            return [], f"[Worker Failed] {err}", {}
+            err = event.payload.get("error") or {}
+            message = err.get("message", "worker failed")
+            return [], f"[Worker Failed] {message}", {}
 
         return [], "", {}
 

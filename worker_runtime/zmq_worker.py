@@ -60,6 +60,9 @@ class ZmqWorker:
                 adapter = self.registry.get(kind)
                 out = adapter.run(payload)  # 外部agent invoke は adapter 内でやる
                 out = out or {}
+                if not isinstance(out, dict):
+                    out = {"value": out}
+                out.setdefault("schema_version", 1)
 
                 msg = {
                     "type": "task.result",
@@ -79,6 +82,12 @@ class ZmqWorker:
                     "kind": kind,
                     "turn_id": turn_id,
                     "status": "FAILED",
-                    "payload": {"error": f"{type(e).__name__}: {e}"},
+                    "payload": {
+                        "schema_version": 1,
+                        "error": {
+                            "code": "worker_error",
+                            "message": f"{type(e).__name__}: {e}",
+                        },
+                    },
                 }
                 self._sock.send_multipart([b"", _j(msg)])

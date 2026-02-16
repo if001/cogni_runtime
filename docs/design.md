@@ -2,7 +2,6 @@
 - ユーザー入力とWorker結果を統一的なイベントとして扱う
 - LLM Agent の逐次処理を保証する
 - Worker（deep_research等）を安全に起動・管理する
-- Worker完了をHTTP経由で受信し、LLM Agentへ入力する
 - CLI / Web / その他UIから独立したruntime層を提供する
 
 ## 前提

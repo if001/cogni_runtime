@@ -85,13 +85,17 @@ class ControllerBus:
                 if data.get("type") != "task.result":
                     continue
 
+                payload = data.get("payload")
+                if not isinstance(payload, dict):
+                    payload = {"value": payload}
+
                 r = TaskResult(
                     task_id=data["task_id"],
                     kind=data["kind"],
                     turn_id=data["turn_id"],
                     status=data["status"],
                     worker=data["worker"],
-                    payload=data.get("payload") or {},
+                    payload=payload or {},
                 )
                 self.on_result(r)
             except Exception:

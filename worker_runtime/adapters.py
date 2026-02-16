@@ -11,5 +11,6 @@ class TaskAdapter(Protocol[T]):
         """
         Must return JSON-serializable dict.
         The shape is defined by the library user and passed through as-is.
+        Large artifacts should be saved to files and returned as paths.
         """
         ...
