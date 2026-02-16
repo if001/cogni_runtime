@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+src/*.egg-info/
+src/cogni_runtime/runtime/__pycache__/
+src/cogni_runtime/worker_runtime/__pycache__/

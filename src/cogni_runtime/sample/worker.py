@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from worker_runtime.adapters import TaskAdapter
-from worker_runtime.registry import AdapterRegistry
-from worker_runtime.zmq_worker import ZmqWorker
+from cogni_runtime.worker_runtime import TaskAdapter, AdapterRegistry, ZmqWorker
 
 
 class SampleAgentAdapter(TaskAdapter):

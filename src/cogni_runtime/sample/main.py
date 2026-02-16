@@ -3,10 +3,14 @@ from __future__ import annotations
 import threading
 import sys
 from typing import Dict, Any, Tuple, List
-from runtime.runtime import MainAgentRuntime
-from runtime.client import Client
-from runtime.llm_adapter import LlmAgentAdapter
-from runtime.types import InputEvent, InputEventType, OutputEventType
+from cogni_runtime.runtime import (
+    MainAgentRuntime,
+    Client,
+    LlmAgentAdapter,
+    InputEvent,
+    InputEventType,
+    OutputEventType,
+)
 
 
 class SimpleEchoAgent(LlmAgentAdapter):
