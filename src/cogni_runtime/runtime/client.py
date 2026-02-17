@@ -3,6 +3,9 @@ from typing import Iterator, Optional
 import asyncio
 from .runtime import MainAgentRuntime, AsyncMainAgentRuntime
 from .types import OutputEvent
+from logging import getLogger
+
+logger = getLogger(__name__)
 
 
 class Client:
@@ -36,9 +39,11 @@ class AsyncClient:
         self.sub_id, self._q = runtime.subscribe(max_queue=max_queue)
 
     def close(self) -> None:
+        logger.debug("close")
         self.runtime.unsubscribe(self.sub_id)
 
     def send(self, text: str) -> str:
+        logger.debug("send")
         return self.runtime.submit_user_text(text)
 
     async def queue_get(self) -> OutputEvent:

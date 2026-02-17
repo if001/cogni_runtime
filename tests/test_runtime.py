@@ -64,7 +64,7 @@ def test_async_main_agent_runtime() -> None:
             llm_agent=AsyncEchoAgent,
             zmq_bind_addr="inproc://test-runtime-async",
         )
-        await runtime.start()
+        await runtime.a_start()
         client = AsyncClient(runtime)
 
         try:
@@ -73,6 +73,6 @@ def test_async_main_agent_runtime() -> None:
             assert text == "final"
         finally:
             client.close()
-            await runtime.stop()
+            await runtime.a_stop()
 
     asyncio.run(_run())

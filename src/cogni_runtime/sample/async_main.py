@@ -65,7 +65,7 @@ async def main() -> None:
         zmq_bind_addr="tcp://127.0.0.1:5555",
     )
 
-    await runtime.start()
+    await runtime.a_start()
 
     client = AsyncClient(runtime)
 
@@ -93,7 +93,7 @@ async def main() -> None:
         with suppress(asyncio.CancelledError):
             await out_task
         client.close()
-        await runtime.stop()
+        await runtime.a_stop()
 
 
 if __name__ == "__main__":

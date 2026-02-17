@@ -1,10 +1,8 @@
 from __future__ import annotations
 import asyncio
-import inspect
 import queue
 import threading
 from typing import Any, Dict, Optional, Tuple, List, Type, Union
-
 from cogni_runtime.runtime.types import (
     InputEvent,
     InputEventType,
@@ -19,6 +17,12 @@ from cogni_runtime.runtime.types import (
 from cogni_runtime.runtime.sinks import InMemoryBroadcastSink
 from cogni_runtime.runtime.llm_adapter import LlmAgentAdapter, LlmAgentAsyncAdapter
 from cogni_runtime.runtime.zmq_bus import ControllerBus
+
+from logging import getLogger, basicConfig, INFO, WARNING
+
+basicConfig(level=WARNING, format="[%(levelname)s](%(name)s): %(message)s", force=True)
+logger = getLogger("cogni_runtime")
+logger.setLevel(INFO)
 
 
 class MainAgentRuntimeBase:
@@ -56,7 +60,7 @@ class MainAgentRuntimeBase:
     # ---------- lifecycle ----------
     # def start(self) -> None:
     #     raise NotImplementedError
-    #
+
     # def stop(self) -> None:
     #     raise NotImplementedError
 
@@ -374,13 +378,14 @@ class MainAgentRuntime(MainAgentRuntimeBase):
 class AsyncMainAgentRuntime(MainAgentRuntimeBase):
     def __init__(
         self,
-        llm_agent: Type[Union[LlmAgentAdapter, LlmAgentAsyncAdapter]],
+        llm_agent: Type[LlmAgentAsyncAdapter],
         *,
         zmq_bind_addr: str = "tcp://127.0.0.1:5555",
         max_inflight_per_worker: int = 1,
         output_sink: Optional[InMemoryBroadcastSink] = None,
         task_timeout_sec: Optional[float] = 300.0,
     ) -> None:
+        self.llm_agent: LlmAgentAsyncAdapter
         super().__init__(
             llm_agent=llm_agent,
             zmq_bind_addr=zmq_bind_addr,
@@ -388,20 +393,49 @@ class AsyncMainAgentRuntime(MainAgentRuntimeBase):
             output_sink=output_sink,
             task_timeout_sec=task_timeout_sec,
         )
-        self._in_q: "asyncio.PriorityQueue[Tuple[int, float, InputEvent]]" = (
-            asyncio.PriorityQueue()
+        self._in_q: Optional["asyncio.PriorityQueue[Tuple[int, float, InputEvent]]"] = (
+            None
         )
-        self._stop = asyncio.Event()
+        self._pending_q: "queue.PriorityQueue[Tuple[int, float, InputEvent]]" = (
+            queue.PriorityQueue()
+        )
+        self._stop = threading.Event()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._task: Optional[asyncio.Task] = None
+        self._thread: Optional[threading.Thread] = None
+        self._owns_loop = False
+        self._loop_ready = threading.Event()
 
-    async def start(self) -> None:
-        self._loop = asyncio.get_running_loop()
-        self.bus.start()
-        if not self._task or self._task.done():
-            self._task = asyncio.create_task(self._loop_async())
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        if self._loop and self._loop.is_running() and not self._owns_loop:
+            raise RuntimeError("runtime already started via a_start()")
+        self._loop_ready.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+        self._loop_ready.wait()
 
-    async def stop(self) -> None:
+    async def a_start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        if self._loop and self._loop.is_running():
+            return
+        self._start_in_loop(asyncio.get_running_loop(), owns_loop=False)
+
+    def stop(self) -> None:
+        if self._thread and self._thread.is_alive():
+            if not self._loop:
+                return
+            fut = asyncio.run_coroutine_threadsafe(self.a_stop(), self._loop)
+            fut.result()
+            self._thread.join()
+            self._thread = None
+            return
+        if self._loop and self._loop.is_running() and not self._owns_loop:
+            raise RuntimeError("use a_stop() when started via a_start()")
+
+    async def a_stop(self) -> None:
         self._stop.set()
         self.bus.stop()
         self._enqueue(
@@ -409,36 +443,65 @@ class AsyncMainAgentRuntime(MainAgentRuntimeBase):
         )
         if self._task:
             await self._task
+        if self._owns_loop and self._loop:
+            self._loop.stop()
 
     def _enqueue(self, ev: InputEvent) -> None:
         item = (ev.priority, ev.ts, ev)
-        if self._loop and self._loop.is_running():
+        if self._loop and self._loop.is_running() and self._in_q:
             self._loop.call_soon_threadsafe(self._in_q.put_nowait, item)
             return
-        self._in_q.put_nowait(item)
+        self._pending_q.put(item)
 
-    async def _call_llm_agent(
-        self, ev: InputEvent
-    ) -> Tuple[List[str], str, Dict[str, Any]]:
-        agent = self.llm_agent
-        a_handler = getattr(agent, "a_handle_event", None)
-        if a_handler is not None:
-            if inspect.iscoroutinefunction(a_handler):
-                return await a_handler(ev, self.state)
-            return await asyncio.to_thread(a_handler, ev, self.state)
+    def _start_in_loop(
+        self, loop: asyncio.AbstractEventLoop, *, owns_loop: bool
+    ) -> None:
+        self._loop = loop
+        self._owns_loop = owns_loop
+        self._stop.clear()
+        if self._in_q is None:
+            self._in_q = asyncio.PriorityQueue()
+        self.bus.start()
+        if not self._task or self._task.done():
+            self._task = loop.create_task(self._loop_async())
+        self._drain_pending()
 
-        handler = getattr(agent, "handle_event")
-        if inspect.iscoroutinefunction(handler):
-            return await handler(ev, self.state)
-        return await asyncio.to_thread(handler, ev, self.state)
+    def _drain_pending(self) -> None:
+        if not self._in_q:
+            return
+        while True:
+            try:
+                item = self._pending_q.get_nowait()
+            except queue.Empty:
+                break
+            self._in_q.put_nowait(item)
+
+    def _run_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._start_in_loop(loop, owns_loop=True)
+        self._loop_ready.set()
+        try:
+            loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            loop.close()
 
     async def _loop_async(self) -> None:
+        if self._in_q is None:
+            raise RuntimeError("runtime not started")
         self._emit(OutputEventType.Status, {"state": "idle"}, None)
-
         while not self._stop.is_set():
             self._expire_inflight(now_ts())
             try:
                 _prio, _ts, ev = await asyncio.wait_for(self._in_q.get(), timeout=0.2)
+                logger.debug(f"get {ev}")
             except asyncio.TimeoutError:
                 continue
 
@@ -452,8 +515,10 @@ class AsyncMainAgentRuntime(MainAgentRuntimeBase):
             )
 
             try:
-                deltas, final_text, meta = await self._call_llm_agent(ev)
-
+                deltas, final_text, meta = await self.llm_agent.handle_event(
+                    ev, self.state
+                )
+                logger.debug("after handle event")
                 for c in deltas:
                     if c:
                         self._emit(
