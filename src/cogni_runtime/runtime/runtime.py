@@ -3,7 +3,7 @@ import queue
 import threading
 from typing import Any, Dict, Optional, Tuple, List, Type
 
-from runtime.types import (
+from cogni_runtime.runtime.types import (
     InputEvent,
     InputEventType,
     OutputEvent,
@@ -14,9 +14,9 @@ from runtime.types import (
     new_id,
     now_ts,
 )
-from runtime.sinks import InMemoryBroadcastSink
-from runtime.llm_adapter import LlmAgentAdapter
-from runtime.zmq_bus import ControllerBus
+from cogni_runtime.runtime.sinks import InMemoryBroadcastSink
+from cogni_runtime.runtime.llm_adapter import LlmAgentAdapter
+from cogni_runtime.runtime.zmq_bus import ControllerBus
 
 
 class MainAgentRuntime:

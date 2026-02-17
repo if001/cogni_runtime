@@ -8,7 +8,7 @@ from aiohttp import worker
 
 import zmq
 
-from app.runtime.types import TaskSpec, TaskResult
+from cogni_runtime.runtime.types import TaskSpec, TaskResult
 
 
 def _j(obj) -> bytes:

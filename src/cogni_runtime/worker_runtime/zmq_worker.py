@@ -10,7 +10,7 @@ from logging import getLogger, basicConfig, INFO
 logger = getLogger(__name__)
 
 
-from worker_runtime.registry import AdapterRegistry
+from cogni_runtime.worker_runtime.registry import AdapterRegistry
 
 
 def _j(obj) -> bytes:
