@@ -19,6 +19,7 @@ class SampleAgentAdapter(TaskAdapter):
         ## ダミー
         # app = self.build_graph()
         # result = app.invoke({"theme": theme})
+        # result = await app.ainvoke({"theme": theme})
         result = {"final_text": f"sample_agent completed research on '{theme}'"}
 
         summary = result["final_text"]

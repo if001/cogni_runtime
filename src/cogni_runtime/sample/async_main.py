@@ -1,20 +1,22 @@
 from __future__ import annotations
 
-import threading
+import asyncio
 import sys
+from contextlib import suppress
 from typing import Dict, Any, Tuple, List
+
 from cogni_runtime.runtime import (
-    MainAgentRuntime,
-    Client,
-    LlmAgentAdapter,
+    AsyncMainAgentRuntime,
+    AsyncClient,
+    LlmAgentAsyncAdapter,
     InputEvent,
     InputEventType,
     OutputEventType,
 )
 
 
-class SimpleEchoAgent(LlmAgentAdapter):
-    def handle_event(
+class SimpleAsyncEchoAgent(LlmAgentAsyncAdapter):
+    async def handle_event(
         self,
         event: InputEvent,
         state: Dict[str, Any],
@@ -23,43 +25,23 @@ class SimpleEchoAgent(LlmAgentAdapter):
             text = event.payload.get("text", "")
             return [], f"Echo: {text}", {}
 
-        elif event.type == InputEventType.SubDone:
+        if event.type == InputEventType.SubDone:
             worker_payload = event.payload.get("payload") or {}
             title = worker_payload.get("title", "")
             summary = worker_payload.get("summary", "")
             return [], f"[Worker Done] {title}\n{summary}", {}
 
-        elif event.type == InputEventType.SubFailed:
+        if event.type == InputEventType.SubFailed:
             err = event.payload.get("error") or {}
             message = err.get("message", "worker failed")
             return [], f"[Worker Failed] {message}", {}
 
         return [], "", {}
 
-    async def a_handle_event(
-        self,
-        event: InputEvent,
-        state: Dict[str, Any],
-    ) -> Tuple[List[str], str, Dict[str, Any]]:
-        if event.type == InputEventType.User:
-            # await graph.ainvoke(...)
-            return [], "", {}
 
-        elif event.type == InputEventType.SubDone:
-            return [], f"", {}
-
-        elif event.type == InputEventType.SubFailed:
-            return [], "", {}
-
-        return [], "", {}
-
-
-def output_loop(client: Client, stop_event: threading.Event):
-    """
-    OutputEvent を購読してターミナル表示
-    """
+async def output_loop(client: AsyncClient, stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
-        ev = client.queue_get()
+        ev = await client.queue_get()
 
         if ev.type == OutputEventType.AssistantDelta:
             print(ev.payload.get("text", ""), end="", flush=True)
@@ -68,51 +50,51 @@ def output_loop(client: Client, stop_event: threading.Event):
             print(f"\nassistant> {ev.payload.get('text', '')}")
 
         elif ev.type == OutputEventType.Status:
-            pass  # 必要なら表示
+            pass
 
         elif ev.type == OutputEventType.Notice:
-            pass  # dispatchなどの通知
+            pass
 
         elif ev.type == OutputEventType.Error:
             print(f"[error] {ev.payload.get('message')}", file=sys.stderr)
 
 
-def main():
-    # --- runtime 初期化 ---
-    runtime = MainAgentRuntime(
-        llm_agent=SimpleEchoAgent,
+async def main() -> None:
+    runtime = AsyncMainAgentRuntime(
+        llm_agent=SimpleAsyncEchoAgent,
         zmq_bind_addr="tcp://127.0.0.1:5555",
     )
 
-    runtime.start()
+    await runtime.start()
 
-    client = Client(runtime)
+    client = AsyncClient(runtime)
 
-    stop_event = threading.Event()
+    stop_event = asyncio.Event()
 
-    # 出力購読スレッド
-    th = threading.Thread(target=output_loop, args=(client, stop_event), daemon=True)
-    th.start()
+    out_task = asyncio.create_task(output_loop(client, stop_event))
 
     print("CLI started. Ctrl+C to exit.")
 
     try:
         while True:
-            text = input("\nyou> ")
+            text = await asyncio.to_thread(input, "\nyou> ")
 
             if not text.strip():
                 continue
 
-            turn_id = client.send(text)
+            client.send(text)
 
     except KeyboardInterrupt:
         print("\nStopping...")
 
     finally:
         stop_event.set()
+        out_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await out_task
         client.close()
-        runtime.stop()
+        await runtime.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

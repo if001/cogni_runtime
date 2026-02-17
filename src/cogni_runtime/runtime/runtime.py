@@ -1,7 +1,9 @@
 from __future__ import annotations
+import asyncio
+import inspect
 import queue
 import threading
-from typing import Any, Dict, Optional, Tuple, List, Type
+from typing import Any, Dict, Optional, Tuple, List, Type, Union
 
 from cogni_runtime.runtime.types import (
     InputEvent,
@@ -15,11 +17,11 @@ from cogni_runtime.runtime.types import (
     now_ts,
 )
 from cogni_runtime.runtime.sinks import InMemoryBroadcastSink
-from cogni_runtime.runtime.llm_adapter import LlmAgentAdapter
+from cogni_runtime.runtime.llm_adapter import LlmAgentAdapter, LlmAgentAsyncAdapter
 from cogni_runtime.runtime.zmq_bus import ControllerBus
 
 
-class MainAgentRuntime:
+class MainAgentRuntimeBase:
     """
     - user入力 & worker結果を 1本のPriorityQueue に積む
     - llm_agent は逐次実行
@@ -28,7 +30,7 @@ class MainAgentRuntime:
 
     def __init__(
         self,
-        llm_agent: Type[LlmAgentAdapter],
+        llm_agent: Type[Union[LlmAgentAdapter, LlmAgentAsyncAdapter]],
         *,
         zmq_bind_addr: str = "tcp://127.0.0.1:5555",
         max_inflight_per_worker: int = 1,
@@ -38,12 +40,6 @@ class MainAgentRuntime:
         self.llm_agent = llm_agent(self)
         self.sink = output_sink or InMemoryBroadcastSink()
         self.task_timeout_sec = task_timeout_sec
-
-        self._in_q: "queue.PriorityQueue[Tuple[int, float, InputEvent]]" = (
-            queue.PriorityQueue()
-        )
-        self._stop = threading.Event()
-        self._th = threading.Thread(target=self._loop, daemon=True)
 
         # worker inflight制御（worker名ごと）
         self.max_inflight_per_worker = max_inflight_per_worker
@@ -58,26 +54,11 @@ class MainAgentRuntime:
         self.state: Dict[str, Any] = {"turn_seq": 0, "last_turn_id": None}
 
     # ---------- lifecycle ----------
-    def start(self) -> None:
-        self.bus.start()
-        if not self._th.is_alive():
-            self._th.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        self.bus.stop()
-        try:
-            self._in_q.put_nowait(
-                (
-                    9999,
-                    now_ts(),
-                    InputEvent(
-                        new_id(), now_ts(), InputEventType.SystemTick, {}, None, 9999
-                    ),
-                )
-            )
-        except Exception:
-            pass
+    # def start(self) -> None:
+    #     raise NotImplementedError
+    #
+    # def stop(self) -> None:
+    #     raise NotImplementedError
 
     # ---------- output subscription ----------
     def subscribe(self, max_queue: int = 1000):
@@ -157,7 +138,7 @@ class MainAgentRuntime:
         return tid
 
     def _enqueue(self, ev: InputEvent) -> None:
-        self._in_q.put((ev.priority, ev.ts, ev))
+        raise NotImplementedError
 
     def _emit(
         self,
@@ -294,6 +275,57 @@ class MainAgentRuntime:
             )
             self._enqueue(ev)
 
+
+class MainAgentRuntime(MainAgentRuntimeBase):
+    def __init__(
+        self,
+        llm_agent: Type[LlmAgentAdapter],
+        *,
+        zmq_bind_addr: str = "tcp://127.0.0.1:5555",
+        max_inflight_per_worker: int = 1,
+        output_sink: Optional[InMemoryBroadcastSink] = None,
+        task_timeout_sec: Optional[float] = 300.0,
+    ) -> None:
+        self.llm_agent: LlmAgentAdapter
+        super().__init__(
+            llm_agent=llm_agent,
+            zmq_bind_addr=zmq_bind_addr,
+            max_inflight_per_worker=max_inflight_per_worker,
+            output_sink=output_sink,
+            task_timeout_sec=task_timeout_sec,
+        )
+        self._in_q: "queue.PriorityQueue[Tuple[int, float, InputEvent]]" = (
+            queue.PriorityQueue()
+        )
+        self._stop = threading.Event()
+        self._th = threading.Thread(target=self._loop, daemon=True)
+
+    # ---------- lifecycle ----------
+    def start(self) -> None:
+        self.bus.start()
+        if not self._th.is_alive():
+            self._th.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self.bus.stop()
+        try:
+            self._in_q.put_nowait(
+                (
+                    9999,
+                    now_ts(),
+                    InputEvent(
+                        new_id(), now_ts(), InputEventType.SystemTick, {}, None, 9999
+                    ),
+                )
+            )
+        except Exception:
+            pass
+
+    # ---------- internal ----------
+    def _enqueue(self, ev: InputEvent) -> None:
+        self._in_q.put((ev.priority, ev.ts, ev))
+
     def _loop(self) -> None:
         self._emit(OutputEventType.Status, {"state": "idle"}, None)
 
@@ -315,6 +347,112 @@ class MainAgentRuntime:
 
             try:
                 deltas, final_text, meta = self.llm_agent.handle_event(ev, self.state)
+
+                for c in deltas:
+                    if c:
+                        self._emit(
+                            OutputEventType.AssistantDelta, {"text": c}, ev.turn_id
+                        )
+
+                if final_text:
+                    self._emit(
+                        OutputEventType.AssistantFinal,
+                        {"text": final_text, "meta": meta},
+                        ev.turn_id,
+                    )
+
+            except Exception as e:
+                self._emit(
+                    OutputEventType.Error,
+                    {"message": f"{type(e).__name__}: {e}"},
+                    ev.turn_id,
+                )
+
+            self._emit(OutputEventType.Status, {"state": "idle"}, ev.turn_id)
+
+
+class AsyncMainAgentRuntime(MainAgentRuntimeBase):
+    def __init__(
+        self,
+        llm_agent: Type[Union[LlmAgentAdapter, LlmAgentAsyncAdapter]],
+        *,
+        zmq_bind_addr: str = "tcp://127.0.0.1:5555",
+        max_inflight_per_worker: int = 1,
+        output_sink: Optional[InMemoryBroadcastSink] = None,
+        task_timeout_sec: Optional[float] = 300.0,
+    ) -> None:
+        super().__init__(
+            llm_agent=llm_agent,
+            zmq_bind_addr=zmq_bind_addr,
+            max_inflight_per_worker=max_inflight_per_worker,
+            output_sink=output_sink,
+            task_timeout_sec=task_timeout_sec,
+        )
+        self._in_q: "asyncio.PriorityQueue[Tuple[int, float, InputEvent]]" = (
+            asyncio.PriorityQueue()
+        )
+        self._stop = asyncio.Event()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._task: Optional[asyncio.Task] = None
+
+    async def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self.bus.start()
+        if not self._task or self._task.done():
+            self._task = asyncio.create_task(self._loop_async())
+
+    async def stop(self) -> None:
+        self._stop.set()
+        self.bus.stop()
+        self._enqueue(
+            InputEvent(new_id(), now_ts(), InputEventType.SystemTick, {}, None, 9999)
+        )
+        if self._task:
+            await self._task
+
+    def _enqueue(self, ev: InputEvent) -> None:
+        item = (ev.priority, ev.ts, ev)
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._in_q.put_nowait, item)
+            return
+        self._in_q.put_nowait(item)
+
+    async def _call_llm_agent(
+        self, ev: InputEvent
+    ) -> Tuple[List[str], str, Dict[str, Any]]:
+        agent = self.llm_agent
+        a_handler = getattr(agent, "a_handle_event", None)
+        if a_handler is not None:
+            if inspect.iscoroutinefunction(a_handler):
+                return await a_handler(ev, self.state)
+            return await asyncio.to_thread(a_handler, ev, self.state)
+
+        handler = getattr(agent, "handle_event")
+        if inspect.iscoroutinefunction(handler):
+            return await handler(ev, self.state)
+        return await asyncio.to_thread(handler, ev, self.state)
+
+    async def _loop_async(self) -> None:
+        self._emit(OutputEventType.Status, {"state": "idle"}, None)
+
+        while not self._stop.is_set():
+            self._expire_inflight(now_ts())
+            try:
+                _prio, _ts, ev = await asyncio.wait_for(self._in_q.get(), timeout=0.2)
+            except asyncio.TimeoutError:
+                continue
+
+            if self._stop.is_set():
+                break
+
+            self._emit(
+                OutputEventType.Status,
+                {"state": "processing", "input_type": ev.type},
+                ev.turn_id,
+            )
+
+            try:
+                deltas, final_text, meta = await self._call_llm_agent(ev)
 
                 for c in deltas:
                     if c:

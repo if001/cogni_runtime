@@ -31,6 +31,11 @@ class SimpleEchoAgent(LlmAgentAdapter):
         else:
             return [], "", {"agent": "SimpleEchoAgent"}
 
+    async def a_handle_event(
+        self, event: InputEvent, state: Dict[str, Any]
+    ) -> Tuple[List[str], str, Dict[str, Any]]:
+        return self.handle_event(event, state)
+
 
 if __name__ == "__main__":
     runtime = MainAgentRuntime(llm_agent=SimpleEchoAgent())
