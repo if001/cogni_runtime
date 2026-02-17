@@ -39,7 +39,7 @@ class MainAgentRuntimeBase:
         zmq_bind_addr: str = "tcp://127.0.0.1:5555",
         max_inflight_per_worker: int = 1,
         output_sink: Optional[InMemoryBroadcastSink] = None,
-        task_timeout_sec: Optional[float] = 300.0,
+        task_timeout_sec: Optional[float] = 1800.0,  # 30min
     ) -> None:
         self.llm_agent = llm_agent(self)
         self.sink = output_sink or InMemoryBroadcastSink()
@@ -112,6 +112,7 @@ class MainAgentRuntimeBase:
         task = TaskSpec(
             task_id=task_id, worker=worker, kind=kind, turn_id=turn_id, payload=payload
         )
+        tracked = False
         if self.task_timeout_sec and self.task_timeout_sec > 0:
             deadline = now_ts() + self.task_timeout_sec
             with self._inflight_lock:
@@ -121,7 +122,31 @@ class MainAgentRuntimeBase:
                     "kind": kind,
                     "deadline": deadline,
                 }
-        self.bus.send_task(task)
+                tracked = True
+
+        sent = self.bus.send_task(task)
+        if not sent:
+            with self._inflight_lock:
+                self._inflight[worker] = max(0, self._inflight.get(worker, 1) - 1)
+                if tracked:
+                    self._inflight_tasks.pop(task_id, None)
+            self._emit(
+                OutputEventType.Notice,
+                {
+                    "kind": "dispatch_failed",
+                    "worker": worker,
+                    "task_id": task_id,
+                    "task_kind": kind,
+                    "reason": "route_unavailable",
+                },
+                turn_id,
+            )
+            return {
+                "accepted": False,
+                "reason": "route_unavailable",
+                "worker": worker,
+            }
+
         self._emit(
             OutputEventType.Notice,
             {

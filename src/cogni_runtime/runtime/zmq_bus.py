@@ -9,6 +9,9 @@ from aiohttp import worker
 import zmq
 
 from cogni_runtime.runtime.types import TaskSpec, TaskResult
+from logging import getLogger, basicConfig, INFO, WARNING
+
+logger = getLogger(__name__)
 
 
 def _j(obj) -> bytes:
@@ -35,6 +38,8 @@ class ControllerBus:
         self._sock = self._ctx.socket(zmq.ROUTER)
         # すぐ再起動できるように
         self._sock.setsockopt(zmq.LINGER, 0)
+        # worker未接続時の送信をエラーにする
+        self._sock.setsockopt(zmq.ROUTER_MANDATORY, 1)
         self._sock.bind(self.bind_addr)
 
         self._stop = threading.Event()
@@ -53,7 +58,7 @@ class ControllerBus:
         except Exception:
             pass
 
-    def send_task(self, task: TaskSpec) -> None:
+    def send_task(self, task: TaskSpec) -> bool:
         # ROUTER: [identity][empty][payload]
         msg = {
             "type": "task.run",
@@ -63,7 +68,13 @@ class ControllerBus:
             "payload": task.payload,
         }
         ident = task.worker.encode("utf-8")
-        self._sock.send_multipart([ident, b"", _j(msg)])
+        try:
+            self._sock.send_multipart([ident, b"", _j(msg)], flags=zmq.DONTWAIT)
+            return True
+        except zmq.ZMQError as e:
+            if e.errno == zmq.EHOSTUNREACH:
+                return False
+            raise
 
     def _loop(self) -> None:
         poller = zmq.Poller()
@@ -98,6 +109,6 @@ class ControllerBus:
                     payload=payload or {},
                 )
                 self.on_result(r)
-            except Exception:
-                # 必要ならログ
+            except Exception as e:
+                logger.error(f"recv error: {e}")
                 continue
