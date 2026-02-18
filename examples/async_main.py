@@ -5,6 +5,7 @@ import sys
 from contextlib import suppress
 from typing import Dict, Any, Tuple, List
 
+from cogni_runtime import runtime
 from cogni_runtime.runtime import (
     AsyncMainAgentRuntime,
     AsyncClient,
@@ -13,9 +14,13 @@ from cogni_runtime.runtime import (
     InputEventType,
     OutputEventType,
 )
+from cogni_runtime.runtime.llm_adapter import RuntimeApi
 
 
 class SimpleAsyncEchoAgent(LlmAgentAsyncAdapter):
+    def __init__(self, runtimeApi: RuntimeApi):
+        self.runtimeApi = runtimeApi
+
     async def handle_event(
         self,
         event: InputEvent,
@@ -23,13 +28,21 @@ class SimpleAsyncEchoAgent(LlmAgentAsyncAdapter):
     ) -> Tuple[List[str], str, Dict[str, Any]]:
         if event.type == InputEventType.User:
             text = event.payload.get("text", "")
+            if text == "dispatch":
+                self.runtimeApi.dispatch_task(
+                    worker="sample_worker",
+                    kind="sample_agent",
+                    turn_id="",
+                    payload={"message": "ok"},
+                )
+
             return [], f"Echo: {text}", {}
 
         if event.type == InputEventType.SubDone:
-            worker_payload = event.payload.get("payload") or {}
-            title = worker_payload.get("title", "")
-            summary = worker_payload.get("summary", "")
-            return [], f"[Worker Done] {title}\n{summary}", {}
+            worker_payload = event.payload or {}
+            print("worker_payload: ", worker_payload)
+            message = worker_payload.get("message", "")
+            return [], f"[Worker Done]\n{message}", {}
 
         if event.type == InputEventType.SubFailed:
             err = event.payload.get("error") or {}
